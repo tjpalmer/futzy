@@ -1,0 +1,6 @@
+I had trouble finding a simple Python client library for the RoboCup Soccer
+Server (rcss), so here's one.
+
+The goal here is to be very simple. I probably need some kind of world model to
+maintain state from server updates, but the main idea is to keep things as bare
+as possible so that other tools can do what they want to with it.
