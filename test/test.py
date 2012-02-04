@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+
 def _configure():
     from os.path import abspath, dirname, join
     from sys import path

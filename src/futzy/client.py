@@ -20,7 +20,7 @@ class Client:
         from threading import Thread
         commands = self.commands
         # The init won't actually get sent until command get below.
-        self.greet()
+        self.init()
 
         def chat():
             from errno import EAGAIN
@@ -38,11 +38,16 @@ class Client:
                     # Look for outbound commands.
                     try:
                         command = commands.get_nowait()
-                        if command is None:
-                            # Special signal for done.
+                        # Special signal for done.
+                        done = command is None
+                        if done:
+                            # Be nice and say goodbye, but it varies by client
+                            # type.
+                            command = self.bye()
+                        # Send the command out.
+                        sock.sendto(command, ('127.0.0.1', self.port))
+                        if done:
                             break
-                        else:
-                            sock.sendto(command, ('127.0.0.1', self.port))
                     except Empty:
                         pass
 
@@ -51,7 +56,7 @@ class Client:
                     # Sample rcssclient uses buffer size 8192.
                     try:
                         data = sock.recvfrom(8192)
-                        print data
+                        self.process(data)
                     except error as err:
                         # EAGAIN just means data wasn't ready. With the server
                         # flood as the common case, this shouldn't happen often.
@@ -59,15 +64,20 @@ class Client:
                             continue
                         else:
                             raise
-                    print data
-
-                print "All done!"
 
             finally:
                 sock.close()
 
         thread = Thread(target = chat)
         thread.start()
+
+    def process(self, data):
+        # The sample rcssclient implies that single packets always contain a
+        # single message and that it doesn't get chopped off. Just believe that
+        # for now.
+        #print
+        #print data
+        pass
 
     def send(self, message):
         self.commands.put(message)
@@ -79,9 +89,14 @@ class PlayerClient(Client):
         Client.__init__(self, **args)
         # TODO Validate team name?
         self.team = args.get('team', 'team')
-        
-    def greet(self):
+
+    def bye(self):
+        # Players have a simple bye.
+        return '(bye)'
+
+    def init(self):
         # TODO Escapes on team name?
+        # TODO Support reconnect?
         self.send('(init %s (version 15))' % self.team)
         #from time import sleep
         #sleep(1.0)
