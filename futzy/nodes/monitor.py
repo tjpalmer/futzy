@@ -60,14 +60,14 @@ def run():
     from socket import AF_INET, SOCK_DGRAM, socket
     from std_msgs.msg import String
      # TODO Stay anonymous or use launch file to manage?
-    init_node('player', anonymous = True)
+    init_node('monitor', anonymous = True)
     sock = socket(AF_INET, SOCK_DGRAM)
     port = 6000
     try:
         # Set up.
         #sock.setblocking(False)
         sock.bind(('', 0))
-        sock.sendto('(init test (version 15))', ('127.0.0.1', port))
+        sock.sendto('(dispinit version 4)', ('127.0.0.1', port))
         response = sock.recvfrom(8192)
         # TODO Check response data, and possibly publish it.
         # Update the port from the server response.
@@ -87,7 +87,7 @@ def run():
             # This is expected.
             pass
         # Be polite.
-        sock.sendto('(bye)', ('127.0.0.1', port))
+        sock.sendto('(dispbye)', ('127.0.0.1', port))
     finally:
         sock.close()
 
