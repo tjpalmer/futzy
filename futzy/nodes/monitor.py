@@ -75,7 +75,6 @@ def run():
         stream = sense(sock, port)
         raw_sensor_pub = Publisher('raw_sensor', String)
         raw_control_sub = Subscriber('raw_control', String, Control(sock, port))
-        from sys import argv; loginfo("Args: %s" % argv)
         try:
             while not is_shutdown():
                 # There is an inherent pause.

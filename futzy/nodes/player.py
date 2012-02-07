@@ -18,32 +18,49 @@ class Control:
         self.sock.sendto(data.data, ('127.0.0.1', self.port))
 
 
-def sense(sock, port):
-    from errno import EAGAIN, EINTR
-    from socket import AF_INET, error, SOCK_DGRAM
+def init(sock, port, team):
+    """
+    Inits the connection with rcssserver. Returns a tuple of (port, side,
+    player_number) on success or raises an error on failure. Given no response
+    from the server, it just pauses.
+    """
+    # TODO Escaping or constraints on team name?
+    from errno import EAGAIN
+    from re import match
+    from rospy import loginfo
+    from socket import error
+    from time import sleep
+    # Turn off blocking while trying to attach. We might need to send init
+    # repeatedly because the server might not be up yet.
+    sock.setblocking(False)
     try:
-        count = 0
         while True:
             try:
-                data = sock.recvfrom(8192)
-                done = yield data[0]
-                if done:
-                    # Respond to Ctrl+C not on our watch.
-                    break
-                count = 0
+                sock.sendto(
+                    '(init %s (version 15))' % team, ('127.0.0.1', port))
+                response = sock.recvfrom(8192)
+                # Got a response!
+                break
             except error as err:
-                # EAGAIN just means data wasn't ready. With the server
-                # flood as the common case, this shouldn't happen often.
-                if err.errno == EAGAIN:
-                    count += 1
-                    continue
-                elif err.errno == EINTR:
-                    # Presumably Ctrl+C happened while blocking on socket io.
-                    return
-                else:
+                if err.errno != EAGAIN:
+                    # Scary error.
                     raise
+            # Sleep and try again.
+            sleep(0.25)
     finally:
-        sock.close()
+        # Reset blocking state.
+        sock.setblocking(True)
+    # TODO Check response data, and possibly publish it.
+    # Update the port from the server response.
+    content = response[0]
+    matched = match(r'\(init (l|r) (\d+) (\w+)\)', content)
+    if not matched:
+        raise RuntimeError("Failed response from rcssserver: %s" % content)
+    side = 'left' if matched.group(1) == 'l' else 'right'
+    player_number = int(matched.group(2))
+    port = response[1][1]
+    # TODO Real player number.
+    return port, side, player_number
 
 
 def main():
@@ -59,23 +76,23 @@ def run():
         get_time, loginfo, init_node, is_shutdown, Publisher, Subscriber)
     from socket import AF_INET, SOCK_DGRAM, socket
     from std_msgs.msg import String
-     # TODO Stay anonymous or use launch file to manage?
-    init_node('player', anonymous = True)
     sock = socket(AF_INET, SOCK_DGRAM)
     port = 6000
     try:
         # Set up.
-        #sock.setblocking(False)
         sock.bind(('', 0))
-        sock.sendto('(init test (version 15))', ('127.0.0.1', port))
-        response = sock.recvfrom(8192)
-        # TODO Check response data, and possibly publish it.
-        # Update the port from the server response.
-        port = response[1][1]
+        # TODO Argument for team name.
+        team = 'test'
+        port, side, player_number = init(sock, port, team)
+        # TODO Stay anonymous or use launch file to manage?
+        node_name = 'player_%s_%02d' % (side, player_number)
+        init_node(node_name)
+
+        # Prepare IO.
         stream = sense(sock, port)
-        raw_sensor_pub = Publisher('raw_sensor', String)
-        raw_control_sub = Subscriber('raw_control', String, Control(sock, port))
-        from sys import argv; loginfo("Args: %s" % argv)
+        raw_sensor_pub = Publisher('%s/raw_sensor' % node_name, String)
+        raw_control_sub = Subscriber(
+            '%s/raw_control' % node_name, String, Control(sock, port))
         try:
             while not is_shutdown():
                 # There is an inherent pause.
@@ -90,6 +107,28 @@ def run():
         sock.sendto('(bye)', ('127.0.0.1', port))
     finally:
         sock.close()
+
+
+def sense(sock, port):
+    from errno import EAGAIN, EINTR
+    from socket import AF_INET, error, SOCK_DGRAM
+    while True:
+        try:
+            data = sock.recvfrom(8192)
+            done = yield data[0]
+            if done:
+                # Respond to Ctrl+C not on our watch.
+                break
+        except error as err:
+            # EAGAIN just means data wasn't ready. With the server
+            # flood as the common case, this shouldn't happen often.
+            if err.errno == EAGAIN:
+                continue
+            elif err.errno == EINTR:
+                # Presumably Ctrl+C happened while blocking on socket io.
+                return
+            else:
+                raise
 
 
 _configure()
