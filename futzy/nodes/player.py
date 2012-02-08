@@ -111,7 +111,7 @@ def run():
 
 def sense(sock, port):
     from errno import EAGAIN, EINTR
-    from socket import AF_INET, error, SOCK_DGRAM
+    from socket import AF_INET, error
     while True:
         try:
             data = sock.recvfrom(8192)
@@ -120,11 +120,7 @@ def sense(sock, port):
                 # Respond to Ctrl+C not on our watch.
                 break
         except error as err:
-            # EAGAIN just means data wasn't ready. With the server
-            # flood as the common case, this shouldn't happen often.
-            if err.errno == EAGAIN:
-                continue
-            elif err.errno == EINTR:
+            if err.errno == EINTR:
                 # Presumably Ctrl+C happened while blocking on socket io.
                 return
             else:
