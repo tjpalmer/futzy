@@ -8,6 +8,11 @@ TODO really does exist just to kick off (and maintain?) the server.
 """
 
 
+def _configure():
+    from roslib import load_manifest
+    load_manifest('futzy')
+
+
 def find_server_exe():
     from os import listdir
     from os.path import abspath, dirname, isfile, join
@@ -25,7 +30,7 @@ def find_server_exe():
         if parent == current:
             # Must be at root.
             break
-        # Go into the parnet.
+        # Go into the parent.
         current = parent
     if server_dir:
         # Find the exe. TODO Support Windows conventions.
@@ -39,11 +44,17 @@ def find_server_exe():
 
 
 def main():
+    from rospy import is_shutdown
     from subprocess import Popen
     exe = find_server_exe()
     print exe
-    Popen(exe)
+    process = Popen(exe)
+    while not is_shutdown():
+        pass
+    # Seems TERM is good enough.
+    process.terminate()
 
 
+_configure()
 if __name__ == '__main__':
     main()
