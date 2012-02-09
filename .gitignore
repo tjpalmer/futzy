@@ -1,1 +1,4 @@
+build
 *.pyc
+*/src/futzy/srv
+srv_gen

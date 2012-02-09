@@ -1,0 +1,26 @@
+# The raw service takes raw rcss commands (either monitor, coach, or player init
+# commands) which have designated response protocols, and interprets the right
+# way to use them, returning all relevant response messages.
+#
+# Player commands are sent on player topics automatically created for active
+# players. Therefore, no player-specific commands (other connection) are
+# supported here.
+
+# A request to the server using raw messages. Supported message types include:
+#
+# * change_mode -- Play mode.
+# * init -- New player.
+# * move -- Any object. That is, this is the coach move command.
+# * reconnect -- Previous player.
+# * recover -- All players.
+#
+# TODO Any monitor commands after all? Any other commands needed here?
+
+string request
+
+---
+
+# Gathers all initial response data for the init request. Many commands have
+# only a single response message, but others have multiple.
+
+string[] responses

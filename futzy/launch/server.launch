@@ -1,0 +1,3 @@
+<launch>
+  <node name="server" ns="futzy" pkg="futzy" type="server.py"/>
+</launch>
