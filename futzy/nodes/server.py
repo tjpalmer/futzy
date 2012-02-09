@@ -8,21 +8,6 @@ TODO really does exist just to kick off (and maintain?) the server.
 """
 
 
-def _configure():
-    from roslib import load_manifest
-    load_manifest('futzy')
-
-
-def main():
-    from rospy import ROSInterruptException
-    try:
-        server = ServerProxy()
-        server.run()
-    except ROSInterruptException:
-        # Official docs recommend ignoring this here.
-        pass
-
-
 class MonitorProxy:
     """
     TODO Unify with PlayerProxy? Rename these to just Monitor and Player?
@@ -62,6 +47,8 @@ class MonitorProxy:
                 try:
                     socket.sendto(
                         '(dispinit version 4)', ('127.0.0.1', self.port))
+                    # Sleep just a bit to give the server time to respond.
+                    sleep(0.25)
                     response = socket.recvfrom(8192)
                     # Got a response!
                     break
@@ -69,8 +56,7 @@ class MonitorProxy:
                     if err.errno != EAGAIN:
                         # Scary error.
                         raise
-                # Sleep and try again.
-                sleep(0.25)
+                # Try again.
         finally:
             # Reset blocking state.
             socket.setblocking(True)
@@ -190,6 +176,19 @@ class ServerProxy:
             exe = None
         return exe
 
+    def parse_options(self):
+        from optparse import OptionParser
+        parser = OptionParser()
+        parser.add_option(
+            '--attach', action = 'store_true', default = False,
+            help =
+                "Attach to an existing rcssserver instance instead of starting "
+                "a new one.")
+        # Saying self.options = ... would be safer, but I want to be able to
+        # override things like self.port, and this makes such things easier. It
+        # just means we need to carefully name our options.
+        self.__dict__.update(parser.parse_args()[0].__dict__)
+
     def run(self):
         from errno import EINTR
         from futzy.srv import Raw
@@ -199,12 +198,17 @@ class ServerProxy:
         from subprocess import Popen
         # Set things up.
         init_node('rcssserver')
-        exe = self.find_server_exe()
-        # Use coach mode by default. The main use case here is for learning and
-        # research, not for actual play.
-        # TODO Support other parameters (like allowing offside and such)!
-        # TODO Automatic rcssmonitor (display) kickoff option!
-        process = Popen([exe, 'server::coach=1'])
+        if self.attach:
+            # Note that all coach commands will fail if the other server wasn't
+            # started with the coach option.
+            process = None
+        else:
+            exe = self.find_server_exe()
+            # Use coach mode by default. The main use case here is for learning
+            # and research, not for actual play.
+            # TODO Support other parameters (like allowing offside and such)!
+            # TODO Automatic rcssmonitor (display) kickoff option!
+            process = Popen([exe, 'server::coach=1'])
         try:
             # Start up our monitor, waiting for the server to be ready.
             self.monitor = MonitorProxy(port = self.port)
@@ -229,12 +233,14 @@ class ServerProxy:
             spin()
         except error as err:
             if err.args[0] != EINTR:
-                # We're only okay with EINTR for now.
+                # We're only okay with EINTR for now. That happens with Ctrl+C
+                # when waiting on select.
                 raise
         finally: 
-            # TODO Also kill all threads gracefully.
-            # Seems TERM is good enough.
-            process.terminate()
+            # TODO Manually say bye and tear down sockets?
+            if process:
+                # Seems TERM is good enough.
+                process.terminate()
 
     def serve_raw_init(self, request):
         player = PlayerProxy(port = self.port)
@@ -253,6 +259,22 @@ class ServerProxy:
         else:
             responses = ['(error unsupported_command)']
         return RawResponse(responses = responses)
+
+
+def _configure():
+    from roslib import load_manifest
+    load_manifest('futzy')
+
+
+def main():
+    from rospy import ROSInterruptException
+    try:
+        server = ServerProxy()
+        server.parse_options()
+        server.run()
+    except ROSInterruptException:
+        # Official docs recommend ignoring this here.
+        pass
 
 
 _configure()
