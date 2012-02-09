@@ -91,10 +91,14 @@ class MonitorProxy:
     def send(self, request):
         """
         Send a manual request to the server, expecting a response.
-        TODO Might a sense response come before this request's response?
         """
-        self.socket.sendto(request, ('127.0.0.1', self.port))
+        self.socket.sendto(request + '\0', ('127.0.0.1', self.port))
+        # TODO Might a sense response come before this request's response?
+        # TODO The answer seems to be yes. Figure out what this means for
+        # TODO coordinating things.
         response = self.socket.recv(8192)
+        if response.endswith('\0'):
+            response = response[:-1]
         # TODO Parse for errors?
         return [response]
 
