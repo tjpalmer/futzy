@@ -31,9 +31,15 @@ class MonitorProxy:
     
     def __init__(self, **args):
         # TODO Better management of info?
+        from Queue import Queue
         self.infos = []
         self.port = args['port']
         self.publisher = None
+        # The maxsize choice here is somewhat arbitrary, but really we shouldn't
+        # be falling behind at all. This just gives a bit of wiggle room without
+        # letting the world fall down for cases where something crazy happens.
+        # That would be a risk if we gave no size limit.
+        self.responses = Queue(maxsize = 10)
         self.socket = None
 
     def init_pausing(self):
@@ -88,6 +94,12 @@ class MonitorProxy:
         # a socket select process elsewhere.
         self.publisher = Publisher('server/raw_sensor', String)
 
+    def is_sensor_message(self, message):
+        """
+        Monitor sensor messages include 'show' (and 'referee' or others?).
+        """
+        return message.startswith('(show ')
+
     def send(self, request):
         """
         Send a manual request to the server, expecting a response.
@@ -96,7 +108,7 @@ class MonitorProxy:
         # TODO Might a sense response come before this request's response?
         # TODO The answer seems to be yes. Figure out what this means for
         # TODO coordinating things.
-        response = self.socket.recv(8192)
+        response = self.responses.get(timeout = 1.0)
         if response.endswith('\0'):
             response = response[:-1]
         # TODO Parse for errors?
@@ -208,7 +220,12 @@ class ServerProxy:
                 for socket in sockets:
                     proxy = self.sockets[socket]
                     message = socket.recv(8192)
-                    proxy.publisher.publish(String(message))
+                    if proxy.is_sensor_message(message):
+                        # Send it out on the sensor stream.
+                        proxy.publisher.publish(String(message))
+                    else:
+                        # Queue the service response.
+                        proxy.responses.put_nowait(message)
             spin()
         except error as err:
             if err.args[0] != EINTR:
