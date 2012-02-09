@@ -36,7 +36,6 @@ class MonitorProxy:
         from rospy import loginfo, Publisher
         from socket import AF_INET, error, SOCK_DGRAM, socket as Socket
         from std_msgs.msg import String
-        from threading import Thread
         from time import sleep
         # Turn off blocking while trying to attach. We might need to send init
         # repeatedly because the server might not be up yet.
@@ -69,7 +68,9 @@ class MonitorProxy:
                 # It's a sense message, not part of the original reply.
                 # TODO Publish this!
                 break
-            # Parse these to store information for later retrieval.
+            # TODO Parse these to store information for later retrieval.
+            if message.endswith('\0'):
+                message = message[:-1]
             self.infos.append(message)
             # Get the next message ready.
             response = socket.recvfrom(8192)
@@ -106,54 +107,99 @@ class PlayerProxy:
     def __init__(self, **args):
         # TODO Do nothing here, because we really want response messages out of
         # TODO the init process, and we can't really return that from __init__.
+        from Queue import Queue
+        # Communication info.
         self.port = args['port']
+        self.responses = Queue(maxsize = 10)
         self.socket = None
-        self.thread = None
+        # Player info.
+        self.number = None
+        self.side = None
+        self.team = None
+        # Precompile regexps for convenience/performance (does it matter?).
+        from re import compile
+        self.init_response_pattern = compile(r'\(init (l|r) (\d+) (\w+)\)')
+        self.sensor_message_pattern = compile(r'\((?:hear|see|sense_body) ')
+
+    def is_sensor_message(self, message):
+        """
+        Monitor sensor messages include 'show' (and 'referee' or others?).
+        """
+        return self.sensor_message_pattern.match(message)
+
+    def parse_init_response(self, message):
+        match = self.init_response_pattern.match(message)
+        if not match:
+            raise RuntimeError("Bad player init response: %s" % message)
+        # Pull out side and number. Ignore play mode for now.
+        # Team name doesn't show up here. We need to get that elsewhere if we
+        # want it.
+        self.side = 'left' if match.group(1) == 'l' else 'right'
+        self.number = int(match.group(2))
+
+    def raw_control(self, request):
+        self.socket.sendto(request.data + '\0', ('127.0.0.1', self.port))
 
     def raw_init(self, request):
-        from re import compile
+        from rospy import Publisher, Subscriber
         from socket import AF_INET, SOCK_DGRAM, socket as Socket
+        from std_msgs.msg import String
+        # Connect and send init request.
         socket = Socket(AF_INET, SOCK_DGRAM)
         socket.bind(('', 0))
         socket.sendto(request, ('127.0.0.1', self.port))
-        # Sample rcssclient uses a buffer size of 8192. I'm not sure what
-        # guarantees exist.
-        response = socket.recvfrom(8192)
         # TODO Check for error.
-        responses = [response[0]]
-        sense_pattern = compile(r'\((?:hear|see|sense) ')
+        responses = []
         while True:
+            # Sample rcssclient uses a buffer size of 8192. I'm not sure what
+            # guarantees exist.
             response = socket.recvfrom(8192)
             message = response[0]
-            if sense_pattern.match(message):
+            if self.is_sensor_message(message):
                 # It's a sense message, not part of the original reply.
                 # TODO Publish this!
                 break
+            if message.endswith('\0'):
+                message = message[:-1]
+            if message.startswith('(init '):
+                self.parse_init_response(message)
             responses.append(message)
         # TODO Other responses perhaps.
         # TODO Register this player and kick off pub/sub on it!
         # For raw mode, don't reinterpret errors as raised exceptions.
         self.socket = socket
         self.port = response[1][1]
+        # Create a publisher for publishing. Actual publication is managed by
+        # a socket select process elsewhere.
+        # We know that only up to 11 players are allowed per side, so hardcode
+        # the digit count to 2 for convenient sorting and alignment.
+        context = 'player_%s_%02d' % (self.side, self.number)
+        self.publisher = Publisher('%s/raw_sensor' % context, String)
+        # And subscriber, too, which automatically gets its own thread.
+        self.subscriber = Subscriber(
+            '%s/raw_control' % context, String, self.raw_control)
+        # And provide the list of responses.
         return responses
 
 
 class ServerProxy:
-    
+
     def __init__(self):
         self.monitor = None
         self.players = []
         self.port = 6000
         self.sockets = {}
 
-    def find_server_exe(self):
+    def find_server_exe(self, name):
         from os import listdir
         from os.path import abspath, dirname, isfile, join
-        # Look for rcssserver dir through parent dirs of where we start.
+        # Assume for now that the exe name and the parent dir name are the same.
+        # This is good for Linux, at least.
+        server_dir_name = name
+        server_dir = None
+        # Look for dir through parent dirs of where we start.
         # TODO Also look in parent dirs of working directory.
         # TODO Also look in system PATH.
-        server_dir_name = 'rcssserver'
-        server_dir = None
         current = abspath(dirname(__file__))
         while True:
             kids = listdir(current)
@@ -169,7 +215,7 @@ class ServerProxy:
         if server_dir:
             # Find the exe. TODO Support Windows conventions.
             # Meanwhile, on Linux, the exe matches exactly the dir name.
-            exe = join(server_dir, 'src', 'rcssserver')
+            exe = join(server_dir, 'src', name)
             if not isfile(exe):
                 exe = None
         else:
@@ -192,23 +238,22 @@ class ServerProxy:
     def run(self):
         from errno import EINTR
         from futzy.srv import Raw
+        from Queue import Full
         from rospy import init_node, is_shutdown, loginfo, Service, spin
         from select import error, select
         from std_msgs.msg import String
         from subprocess import Popen
         # Set things up.
         init_node('rcssserver')
-        if self.attach:
-            # Note that all coach commands will fail if the other server wasn't
-            # started with the coach option.
-            process = None
-        else:
-            exe = self.find_server_exe()
+        processes = []
+        if not self.attach:
+            # TODO Also support rcssmonitor display launch.
+            server_exe = self.find_server_exe('rcssserver')
             # Use coach mode by default. The main use case here is for learning
             # and research, not for actual play.
             # TODO Support other parameters (like allowing offside and such)!
             # TODO Automatic rcssmonitor (display) kickoff option!
-            process = Popen([exe, 'server::coach=1'])
+            processes.append(Popen([server_exe, 'server::coach=1']))
         try:
             # Start up our monitor, waiting for the server to be ready.
             self.monitor = MonitorProxy(port = self.port)
@@ -229,7 +274,15 @@ class ServerProxy:
                         proxy.publisher.publish(String(message))
                     else:
                         # Queue the service response.
-                        proxy.responses.put_nowait(message)
+                        print message
+                        try:
+                            proxy.responses.put_nowait(message)
+                        except Full:
+                            # Misbehavior. Would be nice to keep the x most
+                            # recent, but this will do for now.
+                            # See http://stackoverflow.com/questions/6517953/clear-all-items-from-the-queue
+                            with proxy.responses.queue.mutex:
+                                proxy.responses.queue.clear()
             spin()
         except error as err:
             if err.args[0] != EINTR:
@@ -238,7 +291,7 @@ class ServerProxy:
                 raise
         finally: 
             # TODO Manually say bye and tear down sockets?
-            if process:
+            for process in processes:
                 # Seems TERM is good enough.
                 process.terminate()
 
@@ -246,6 +299,7 @@ class ServerProxy:
         player = PlayerProxy(port = self.port)
         responses = player.raw_init(request)
         self.players.append(player)
+        self.sockets[player.socket] = player
         return responses
 
     def serve_raw(self, request):
