@@ -237,10 +237,10 @@ class ServerProxy:
                 "Attach to an existing rcssserver instance instead of starting "
                 "a new one.")
         parser.add_option(
-            '-p', '--param', action = 'append', dest = 'params',
+            '-p', '--param', action = 'append', default=[], dest = 'params',
             help =
-                "Specify a rcss server parameter in the form name=value. Don't "
-                "use this technique to specify parameters supported more "
+                "Specify an rcss server parameter in the form name=value. "
+                "Don't use this technique to specify parameters supported more "
                 "directly. For example, use --port for port (when that's "
                 "supported).")
         # Saying self.options = ... would be safer, but I want to be able to
@@ -253,7 +253,7 @@ class ServerProxy:
         from errno import EINTR
         from futzy.srv import Raw
         from Queue import Full
-        from rospy import init_node, loginfo, Service, spin
+        from rospy import init_node, loginfo, logwarn, Service, spin
         from select import error, select
         from std_msgs.msg import String
         from subprocess import Popen
@@ -270,8 +270,7 @@ class ServerProxy:
             server_args = [server_exe, 'server::coach=1']
             # Too interfering: server_args.append('server::coach_w_referee=1')
             server_args += ['server::%s' % param for param in self.params]
-            print server_args
-            processes.append(Popen(server_args))#, 'server::coach_w_referee=1']))
+            processes.append(Popen(server_args))
         try:
             # Start up our monitor, waiting for the server to be ready.
             self.monitor = MonitorProxy(port = self.port)
@@ -292,15 +291,16 @@ class ServerProxy:
                         proxy.publisher.publish(String(message))
                     else:
                         # Queue the service response.
-                        print message
                         try:
                             proxy.responses.put_nowait(message)
                         except Full:
                             # Misbehavior. Would be nice to keep the x most
-                            # recent, but this will do for now.
-                            # See http://stackoverflow.com/questions/6517953/clear-all-items-from-the-queue
-                            with proxy.responses.queue.mutex:
-                                proxy.responses.queue.clear()
+                            # recent, but this will do for now. Lock the mutex
+                            # in advance to simplify draining process.
+                            with proxy.responses.mutex:
+                                while not proxy.responses.empty():
+                                    message = proxy.responses.get()
+                                    logwarn("Ignored message: %s" % message)
             spin()
         except error as err:
             if err.args[0] != EINTR:
