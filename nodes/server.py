@@ -164,6 +164,11 @@ class PlayerProxy:
             if message.startswith('(init '):
                 self.parse_init_response(message)
             responses.append(message)
+            if message.startswith('(error '):
+                # For errors, that's the only message we get. Can't just spin
+                # until sensor data. No player init below to worry about,
+                # either.
+                return responses
         # TODO Other responses perhaps.
         # TODO Register this player and kick off pub/sub on it!
         # For raw mode, don't reinterpret errors as raised exceptions.
@@ -186,6 +191,7 @@ class ServerProxy:
 
     def __init__(self):
         self.monitor = None
+        self.params = []
         self.players = []
         self.port = 6000
         self.sockets = {}
@@ -230,16 +236,24 @@ class ServerProxy:
             help =
                 "Attach to an existing rcssserver instance instead of starting "
                 "a new one.")
+        parser.add_option(
+            '-p', '--param', action = 'append', dest = 'params',
+            help =
+                "Specify a rcss server parameter in the form name=value. Don't "
+                "use this technique to specify parameters supported more "
+                "directly. For example, use --port for port (when that's "
+                "supported).")
         # Saying self.options = ... would be safer, but I want to be able to
         # override things like self.port, and this makes such things easier. It
         # just means we need to carefully name our options.
-        self.__dict__.update(parser.parse_args()[0].__dict__)
+        options = parser.parse_args()[0]
+        self.__dict__.update(options.__dict__)
 
     def run(self):
         from errno import EINTR
         from futzy.srv import Raw
         from Queue import Full
-        from rospy import init_node, is_shutdown, loginfo, Service, spin
+        from rospy import init_node, loginfo, Service, spin
         from select import error, select
         from std_msgs.msg import String
         from subprocess import Popen
@@ -253,7 +267,11 @@ class ServerProxy:
             # and research, not for actual play.
             # TODO Support other parameters (like allowing offside and such)!
             # TODO Automatic rcssmonitor (display) kickoff option!
-            processes.append(Popen([server_exe, 'server::coach=1']))
+            server_args = [server_exe, 'server::coach=1']
+            # Too interfering: server_args.append('server::coach_w_referee=1')
+            server_args += ['server::%s' % param for param in self.params]
+            print server_args
+            processes.append(Popen(server_args))#, 'server::coach_w_referee=1']))
         try:
             # Start up our monitor, waiting for the server to be ready.
             self.monitor = MonitorProxy(port = self.port)
@@ -298,8 +316,10 @@ class ServerProxy:
     def serve_raw_init(self, request):
         player = PlayerProxy(port = self.port)
         responses = player.raw_init(request)
-        self.players.append(player)
-        self.sockets[player.socket] = player
+        if player.side is not None:
+            # Must have been a good response. Finish the init process.
+            self.players.append(player)
+            self.sockets[player.socket] = player
         return responses
 
     def serve_raw(self, request):

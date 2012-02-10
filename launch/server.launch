@@ -1,3 +1,7 @@
 <launch>
-  <node name="server" ns="futzy" pkg="futzy" type="server.py" output="screen"/>
+  <node
+      name="server" ns="futzy" pkg="futzy" type="server.py" output="screen"
+      args="
+        --param forbid_kick_off_offside=false
+        --param use_offside=false"/>
 </launch>
