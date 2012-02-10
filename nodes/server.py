@@ -327,11 +327,12 @@ class ServerProxy:
         request = request.request
         if request.startswith('(init '):
             responses = self.serve_raw_init(request)
-        elif request.startswith('(move '):
+        else:
             # TODO Regex all the options for monitor/coach commands?
             responses = self.monitor.send(request)
-        else:
-            responses = ['(error unsupported_command)']
+        # TODO Constrain which commands can be sent?
+        #else:
+        #    responses = ['(error unsupported_command)']
         return RawResponse(responses = responses)
 
 
