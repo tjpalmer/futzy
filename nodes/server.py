@@ -261,15 +261,12 @@ class ServerProxy:
         init_node('rcssserver')
         processes = []
         if not self.attach:
-            # TODO Also support rcssmonitor display launch.
+            # TODO Also support rcssmonitor display launch? For now,I just leave
+            # TODO one running and use Ctrl+C on it to reconnect on demand.
             server_exe = self.find_server_exe('rcssserver')
-            # Use coach mode by default. The main use case here is for learning
-            # and research, not for actual play.
-            # TODO Support other parameters (like allowing offside and such)!
-            # TODO Automatic rcssmonitor (display) kickoff option!
-            server_args = [server_exe, 'server::coach=1']
-            # Too interfering: server_args.append('server::coach_w_referee=1')
-            server_args += ['server::%s' % param for param in self.params]
+            # Append speficied server parameters to the command arguments.
+            server_args = [server_exe] + [
+                'server::%s' % param for param in self.params]
             processes.append(Popen(server_args))
         try:
             # Start up our monitor, waiting for the server to be ready.
